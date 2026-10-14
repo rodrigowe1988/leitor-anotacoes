@@ -150,13 +150,30 @@
   }
   #palette button:hover { transform: scale(1.12); border-color: #fff; }
 
-  .hl-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow: auto; }
+  .hl-list { display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow: auto; }
   .hl-item {
     background: #fff; border: 1px solid var(--line); border-left-width: 7px;
     border-radius: 8px; padding: 10px 12px;
   }
   .hl-item p { margin: 0 0 8px; font-family: var(--write); font-size: 16px; line-height: 1.5; }
-  .hl-actions { display: flex; gap: 6px; }
+  .hl-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .hl-item p.clickable { cursor: pointer; }
+  .hl-item p.hl-note {
+    padding: 6px 10px; background: #f4f6fc; border-radius: 6px;
+    font-family: var(--ui); font-size: 14px; font-style: italic; white-space: pre-wrap;
+  }
+  .hl-editor { margin: 0 0 8px; display: flex; flex-direction: column; gap: 8px; }
+  .hl-editor[hidden] { display: none; }
+  .hl-colors { display: flex; gap: 8px; align-items: center; }
+  .hl-editor textarea, .img-card textarea {
+    flex: none; min-height: 0; font-family: var(--ui); font-size: 14px; line-height: 1.4;
+    padding: 8px 10px; resize: vertical; border-radius: 8px;
+  }
+  .hl-item.flash { animation: hlflash 1.3s ease; }
+  @keyframes hlflash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px var(--accent); } }
+  .img-card img { cursor: zoom-in; }
+  #lightbox { z-index: 60; cursor: zoom-out; }
+  #lbImg { max-width: 96vw; max-height: 92vh; background: #fff; border-radius: 8px; object-fit: contain; }
   .hl-actions button { min-height: 30px; padding: 3px 10px; font-size: 13px; }
   .hl-empty { margin: 0; color: var(--ink-soft); font-size: 14px; padding: 8px 2px; }
 
@@ -387,6 +404,10 @@
     </div>
     <div class="draw-stage" id="dStage"><canvas id="dCanvas" aria-label="Área de desenho"></canvas></div>
   </div>
+</div>
+
+<div class="modal" id="lightbox" hidden role="dialog" aria-label="Imagem ampliada">
+  <img id="lbImg" alt="">
 </div>
 
 <div id="palette" role="toolbar" aria-label="Marca-texto">
@@ -762,7 +783,7 @@
       }
       rects = dedupe(rects);
       if (!rects.length) return;
-      highlights.push({ id: ++hlSeq, page: Number(p.dataset.page), color, text, rects });
+      highlights.push({ id: ++hlSeq, page: Number(p.dataset.page), color, text, rects, note: '' });
       drawHighlights(p); added++;
     });
     sel.removeAllRanges();
@@ -784,6 +805,8 @@
       a.page - b.page || ((a.rects[0] || [0, 0])[1] - (b.rects[0] || [0, 0])[1]));
   }
 
+  const hlOpen = new Set();
+
   function renderHlList() {
     const box = $('hlList');
     const n = highlights.length;
@@ -796,17 +819,71 @@
     }
     for (const h of sortedHighlights()) {
       const item = document.createElement('div');
-      item.className = 'hl-item'; item.style.borderLeftColor = COLORS[h.color] || '#ccc';
-      const p = document.createElement('p'); p.textContent = h.text;
+      item.className = 'hl-item'; item.dataset.id = h.id;
+      item.style.borderLeftColor = COLORS[h.color] || '#ccc';
+
+      const p = document.createElement('p');
+      p.className = 'clickable'; p.textContent = h.text; p.title = 'Clique para comentar';
+
+      const noteP = document.createElement('p'); noteP.className = 'hl-note';
+
+      const editor = document.createElement('div'); editor.className = 'hl-editor';
+      editor.hidden = !hlOpen.has(h.id);
+      const ta = document.createElement('textarea');
+      ta.rows = 3; ta.placeholder = 'Seu comentário sobre este trecho…'; ta.value = h.note || '';
+      ta.setAttribute('aria-label', 'Comentário do destaque da página ' + h.page);
+      ta.addEventListener('input', () => { h.note = ta.value; dirty = true; });
+      const sw = document.createElement('div'); sw.className = 'hl-colors';
+      Object.keys(COLORS).forEach((name) => {
+        const b = document.createElement('button');
+        b.className = 'swatch'; b.style.background = COLORS[name];
+        b.setAttribute('aria-label', 'Cor ' + name); b.title = 'Mudar para ' + name;
+        b.setAttribute('aria-pressed', String(h.color === name));
+        b.onclick = () => {
+          h.color = name; dirty = true;
+          item.style.borderLeftColor = COLORS[name];
+          sw.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          const pe = viewer.querySelector('.page[data-page="' + h.page + '"]');
+          if (pe) drawHighlights(pe);
+        };
+        sw.appendChild(b);
+      });
+      editor.append(ta, sw);
+
       const actions = document.createElement('div'); actions.className = 'hl-actions';
+      const edit = document.createElement('button');
+      const refresh = () => {
+        noteP.textContent = h.note || '';
+        noteP.hidden = !h.note || !editor.hidden;
+        edit.textContent = !editor.hidden ? 'Concluir' : (h.note ? 'Editar comentário' : 'Comentar');
+      };
+      const toggle = () => {
+        editor.hidden = !editor.hidden;
+        if (editor.hidden) hlOpen.delete(h.id); else { hlOpen.add(h.id); ta.focus(); }
+        refresh();
+      };
+      edit.onclick = toggle; p.onclick = toggle;
+      refresh();
       const go = document.createElement('button'); go.textContent = 'Ir para p. ' + h.page;
       go.onclick = () => { if (pdfDoc) setPage(h.page); else toast('Abra o PDF para ir até a página.'); };
       const del = document.createElement('button'); del.textContent = 'Remover';
-      del.onclick = () => removeHighlight(h.id);
-      actions.append(go, del);
-      item.append(p, actions);
+      del.onclick = () => { hlOpen.delete(h.id); removeHighlight(h.id); };
+      actions.append(edit, go, del);
+
+      item.append(p, noteP, editor, actions);
       box.appendChild(item);
     }
+  }
+
+  // Abre o cartão do destaque (usado ao clicar no trecho marcado no PDF)
+  function focusHighlight(id) {
+    hlOpen.add(id); renderHlList();
+    const card = $('hlList').querySelector('[data-id="' + id + '"]');
+    if (!card) return;
+    card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    card.classList.add('flash');
+    setTimeout(() => card.classList.remove('flash'), 1400);
+    const ta = card.querySelector('textarea'); if (ta) ta.focus({ preventScroll: true });
   }
 
   /* Paleta flutuante perto do trecho selecionado */
@@ -835,6 +912,17 @@
     clearTimeout(palTimer); palTimer = setTimeout(updatePalette, 200);
   });
   viewer.addEventListener('pointerdown', hidePalette);
+  viewer.addEventListener('click', (e) => {
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    const pg = e.target.closest('.page'); if (!pg) return;
+    const r = pg.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    const n = Number(pg.dataset.page);
+    const hit = highlights.find((h) => h.page === n &&
+      h.rects.some((q) => x >= q[0] && x <= q[0] + q[2] && y >= q[1] && y <= q[1] + q[3]));
+    if (hit) focusHighlight(hit.id);
+  });
   viewer.addEventListener('scroll', hidePalette);
   palette.addEventListener('mousedown', (e) => e.preventDefault());
   palette.addEventListener('click', (e) => {
@@ -934,6 +1022,15 @@
     toast(ok > 1 ? 'Imagens adicionadas.' : 'Imagem adicionada.');
   }
 
+  function openLightbox(im) {
+    $('lbImg').src = im.dataUrl; $('lbImg').alt = im.caption || ('Imagem ' + im.id);
+    $('lightbox').hidden = false;
+  }
+  $('lightbox').addEventListener('click', () => { $('lightbox').hidden = true; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('lightbox').hidden) $('lightbox').hidden = true;
+  });
+
   function removeImage(id) {
     images = images.filter((i) => i.id !== id);
     notes.value = notes.value.replace(new RegExp('\\[imagem ' + id + '\\]', 'g'), '').replace(/\n{3,}/g, '\n\n');
@@ -948,12 +1045,17 @@
       const card = document.createElement('div'); card.className = 'img-card';
       const pic = document.createElement('img');
       pic.src = im.dataUrl; pic.alt = im.caption || ('Imagem ' + im.id);
+      pic.title = 'Clique para ampliar'; pic.onclick = () => openLightbox(im);
       const meta = document.createElement('div'); meta.className = 'img-meta';
       meta.textContent = 'Imagem ' + im.id + (im.page ? ' · p. ' + im.page : '');
       const cap = document.createElement('input');
       cap.type = 'text'; cap.placeholder = 'Legenda (opcional)'; cap.value = im.caption;
       cap.setAttribute('aria-label', 'Legenda da imagem ' + im.id);
       cap.addEventListener('input', () => { im.caption = cap.value; dirty = true; });
+      const note = document.createElement('textarea');
+      note.rows = 2; note.placeholder = 'Nota sobre esta imagem (opcional)'; note.value = im.note || '';
+      note.setAttribute('aria-label', 'Nota da imagem ' + im.id);
+      note.addEventListener('input', () => { im.note = note.value; dirty = true; });
       const actions = document.createElement('div'); actions.className = 'hl-actions';
       const ins = document.createElement('button'); ins.textContent = 'Inserir no texto';
       ins.onclick = () => { insertAtCursor(notes, '[imagem ' + im.id + ']'); dirty = true; updateCounts(); };
@@ -965,7 +1067,7 @@
         actions.append(ed);
       }
       actions.append(ins, del);
-      card.append(pic, meta, cap, actions);
+      card.append(pic, meta, cap, note, actions);
       box.appendChild(card);
     }
   }
@@ -990,14 +1092,17 @@
     return noteSegments().map((sg) => {
       if (sg.type === 'text') return sg.text;
       const alt = (sg.img.caption || 'Imagem ' + sg.img.id).replace(/[\[\]\n]/g, ' ');
-      return '\n\n![' + alt + '](' + sg.img.dataUrl + ')\n\n';
+      const nb = sg.img.note
+        ? sg.img.note.split('\n').map((l, i) => '> ' + (i === 0 ? 'Nota: ' : '') + l).join('\n') + '\n\n' : '';
+      return '\n\n![' + alt + '](' + sg.img.dataUrl + ')\n\n' + nb;
     }).join('').replace(/\n{3,}/g, '\n\n').trim();
   }
 
   function importNotesText(str) {
     images = [];
-    return str.replace(/!\[([^\]]*)\]\((data:image\/[a-z+.-]+;base64,[A-Za-z0-9+\/=]+)\)/gi, (m, alt, url) => {
-      const im = { id: ++imgSeq, dataUrl: url, w: 0, h: 0, caption: /^Imagem \d+$/.test(alt) ? '' : alt.trim(), page: null };
+    return str.replace(/!\[([^\]]*)\]\((data:image\/[a-z+.-]+;base64,[A-Za-z0-9+\/=]+)\)(?:\n+> Nota: ([^\n]*(?:\n> [^\n]*)*))?/gi, (m, alt, url, nt) => {
+      const im = { id: ++imgSeq, dataUrl: url, w: 0, h: 0, caption: /^Imagem \d+$/.test(alt) ? '' : alt.trim(), page: null,
+                   note: nt ? nt.replace(/\n> /g, '\n') : '' };
       images.push(im);
       return '[imagem ' + im.id + ']';
     });
@@ -1260,7 +1365,8 @@
     const title = pdfName ? pdfName.replace(/\.pdf$/i, '') : 'Notas';
     const hlLines = sortedHighlights().map((h) =>
       '- [p. ' + h.page + '] (' + h.color + ') ' + h.text +
-      (h.rects.length ? ' <!--r:' + rectsToStr(h.rects) + '-->' : ''));
+      (h.rects.length ? ' <!--r:' + rectsToStr(h.rects) + '-->' : '') +
+      (h.note ? '\n' + h.note.split('\n').map((l) => '  > ' + l).join('\n') : ''));
     const md = '# ' + title + '\n\n## Resumo\n\n' + summary.value.trim() +
                '\n\n## Destaques\n\n' + hlLines.join('\n') +
                '\n\n## Anotações\n\n' + notesForMd() + '\n';
@@ -1295,9 +1401,16 @@
       notes.value = importNotesText(sections.anotacoes.join('\n').trim());
       const re = /^-\s*\[p\.\s*(\d+)\]\s*\((amarelo|verde|rosa|azul)\)\s*(.*?)(?:\s*<!--r:([^>]*?)-->)?\s*$/;
       highlights = [];
+      let curH = null;
       for (const line of sections.destaques) {
-        const m = line.match(re); if (!m) continue;
-        highlights.push({ id: ++hlSeq, page: Number(m[1]), color: m[2], text: m[3], rects: strToRects(m[4]) });
+        const m = line.match(re);
+        if (m) {
+          curH = { id: ++hlSeq, page: Number(m[1]), color: m[2], text: m[3], rects: strToRects(m[4]), note: '' };
+          highlights.push(curH);
+          continue;
+        }
+        const nm = line.match(/^\s{2}>\s?(.*)$/);
+        if (curH && nm) curH.note = (curH.note ? curH.note + '\n' : '') + nm[1];
       }
     }
     updateCounts(); renderHlList(); renderImgList();
@@ -1402,7 +1515,8 @@
             { stack: [
                 { text: 'Página ' + h.page, style: 'tag' },
                 { text: h.text, background: COLORS[h.color], margin: [0, 2, 0, 0] }
-              ], margin: [8, 3, 0, 3] }
+              ].concat(h.note ? [{ text: 'Comentário: ' + h.note, italics: true, fontSize: 10, color: '#3a4366', margin: [0, 5, 0, 0] }] : []),
+              margin: [8, 3, 0, 3] }
           ]] },
           layout: 'noBorders', margin: [0, 0, 0, 8]
         });
@@ -1414,7 +1528,8 @@
         if (sg.type === 'text') { content.push(...mdBlocks(sg.text)); continue; }
         const im = sg.img;
         content.push({ image: im.dataUrl, fit: [515, 380], alignment: 'center', margin: [0, 4, 0, im.caption ? 2 : 10] });
-        if (im.caption) content.push({ text: im.caption, italics: true, fontSize: 9.5, color: '#5a6380', alignment: 'center', margin: [0, 0, 0, 10] });
+        if (im.caption) content.push({ text: im.caption, italics: true, fontSize: 9.5, color: '#5a6380', alignment: 'center', margin: [0, 0, 0, im.note ? 4 : 10] });
+        if (im.note) content.push({ text: im.note, fontSize: 10, color: '#3a4366', margin: [10, 0, 10, 10] });
       }
     }
 
@@ -1533,7 +1648,8 @@
       const items = sortedHighlights().map((h) =>
         '<div class="hl" style="border-left:5px solid ' + COLORS[h.color] + '">' +
         '<p class="tag">Página ' + h.page + '</p>' +
-        '<p><span style="background-color:' + COLORS[h.color] + '">' + esc(h.text) + '</span></p></div>').join('\n');
+        '<p><span style="background-color:' + COLORS[h.color] + '">' + esc(h.text) + '</span></p>' +
+        (h.note ? '<p class="note">' + esc(h.note).replace(/\n/g, '<br/>') + '</p>' : '') + '</div>').join('\n');
       chapters.push({ id: 'destaques', file: 'destaques.xhtml', label: 'Destaques',
         xhtml: page('Destaques', '<h1>Destaques</h1>\n' + items) });
     }
@@ -1546,7 +1662,8 @@
         const file = 'images/img-' + im.id + '.' + (/png/i.test(mm[1]) ? 'png' : 'jpg');
         epubImages.push({ id: 'img' + im.id, file, type: mm[1], data: mm[2] });
         return '<figure><img src="' + file + '" alt="' + esc(im.caption || 'Imagem ' + im.id) + '"/>' +
-               (im.caption ? '<figcaption>' + esc(im.caption) + '</figcaption>' : '') + '</figure>';
+               (im.caption ? '<figcaption>' + esc(im.caption) + '</figcaption>' : '') + '</figure>' +
+               (im.note ? '<p class="note">' + esc(im.note).replace(/\n/g, '<br/>') + '</p>' : '');
       }).join('\n');
       chapters.push({ id: 'anotacoes', file: 'anotacoes.xhtml', label: 'Anotações',
         xhtml: page('Anotações', '<h1>Anotações</h1>\n' + body) });
@@ -1565,7 +1682,8 @@
       '.ref { color: #7a5f00; }\n' +
       'figure { margin: 1em 0; text-align: center; }\n' +
       'img { max-width: 100%; height: auto; }\n' +
-      'figcaption { font-size: .85em; color: #666; font-style: italic; }\n';
+      'figcaption { font-size: .85em; color: #666; font-style: italic; }\n' +
+      '.note { font-size: .92em; font-style: italic; margin: .2em 0 1em 1em; }\n';
 
     const manifest = chapters.map((c) => '<item id="' + c.id + '" href="' + c.file + '" media-type="application/xhtml+xml"/>')
       .concat(epubImages.map((im) => '<item id="' + im.id + '" href="' + im.file + '" media-type="' + im.type + '"/>')).join('\n    ');
